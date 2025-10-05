@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/PianyCoder/test_file_service/internal/storage"
 
-	"github.com/PianyCoder/test_file_service/internal/entity"
+	entity "github.com/PianyCoder/test_file_service/internal/entity"
 	"golang.org/x/sync/semaphore"
 	"io"
 	"path/filepath"
