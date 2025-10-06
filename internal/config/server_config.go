@@ -1,5 +1,5 @@
 package config
 
 type ServerConfig struct {
-	Addr string
+	Addr string `env:"SERVER_ADDR"`
 }

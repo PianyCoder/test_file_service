@@ -32,7 +32,7 @@ func Start(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize minio: %w", err)
 	}
 
-	stg := storage.NewMinioStorage(minioCli, cfg.MinioConfig.Bucket)
+	stg := storage.NewMinioStorage(minioCli, cfg.MinioConfig.BucketName)
 
 	cfgS := cfg.ServiceConfig
 	svc := service.NewFileService(stg, cfgS.UploadLimit, cfgS.DownloadLimit, cfgS.ListLimit, cfgS.ChunkSize)
