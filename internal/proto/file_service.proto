@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package file_service;
 
-option go_package = "test_file_service/internal/2e22e";
+option go_package = "github.com/PianyCoder/test_file_service/internal/proto;proto";
 
 import "google/protobuf/timestamp.proto";
 

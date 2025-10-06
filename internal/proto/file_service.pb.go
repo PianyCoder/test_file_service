@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.6
 // 	protoc        v3.12.4
-// source: internal/2e22e/file_service.2e22e
+// source: internal/proto/file_service.proto
 
 package proto
 
@@ -350,7 +350,7 @@ var File_internal_proto_file_service_proto protoreflect.FileDescriptor
 
 const file_internal_proto_file_service_proto_rawDesc = "" +
 	"\n" +
-	"!internal/2e22e/file_service.2e22e\x12\ffile_service\x1a\x1fgoogle/protobuf/timestamp.2e22e\"E\n" +
+	"!internal/proto/file_service.proto\x12\ffile_service\x1a\x1fgoogle/protobuf/timestamp.proto\"E\n" +
 	"\x11UploadFileRequest\x12\x1a\n" +
 	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x14\n" +
 	"\x05chunk\x18\x02 \x01(\fR\x05chunk\".\n" +
@@ -373,7 +373,7 @@ const file_internal_proto_file_service_proto_rawDesc = "" +
 	"\n" +
 	"UploadFile\x12\x1f.file_service.UploadFileRequest\x1a .file_service.UploadFileResponse(\x01\x12W\n" +
 	"\fDownloadFile\x12!.file_service.DownloadFileRequest\x1a\".file_service.DownloadFileResponse0\x01\x12L\n" +
-	"\tListFiles\x12\x1e.file_service.ListFilesRequest\x1a\x1f.file_service.ListFilesResponseB\"Z test_file_service/internal/protob\x06proto3"
+	"\tListFiles\x12\x1e.file_service.ListFilesRequest\x1a\x1f.file_service.ListFilesResponseB>Z<github.com/PianyCoder/test_file_service/internal/proto;protob\x06proto3"
 
 var (
 	file_internal_proto_file_service_proto_rawDescOnce sync.Once
