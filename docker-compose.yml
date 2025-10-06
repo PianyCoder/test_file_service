@@ -4,27 +4,15 @@ services:
   minio:
     image: minio/minio:latest
     ports:
-      - "${MINIO_PORT}:${MINIO_PORT}"
-      - "${UI_MINIO_PORT}:${UI_MINIO_PORT}"
+      - "${MINIO_PORT:-9000}:9000"
+      - "${UI_MINIO_PORT:-9001}:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
-
-  mc:
-    image: minio/mc
-    depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "
-      sleep 5 &&
-      mc alias set file_service http://minio:${MINIO_PORT} ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
-      mc mb -p test_file_service/images-bucket || true
-      "
-    restart: "no"
 
   file_service:
     build:
@@ -33,14 +21,17 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - MINIO_BASE_URL=${MINIO_BASE_URL}
-      - MINIO_PORT=${MINIO_PORT}
-      - UI_MINIO_PORT=${UI_MINIO_PORT}
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-      - MINIO_USE_SSL=${MINIO_USE_SSL}
-      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME}
+      - MINIO_BASE_URL=${MINIO_BASE_URL:-minio}
+      - MINIO_PORT=${MINIO_PORT:-9000}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_USE_SSL=${MINIO_USE_SSL:-false}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-images-bucket}
+      - SERVICE_UPLOAD_LIMIT=${SERVICE_UPLOAD_LIMIT:-10}
+      - SERVICE_DOWNLOAD_LIMIT=${SERVICE_DOWNLOAD_LIMIT:-10}
+      - SERVICE_LIST_LIMIT=${SERVICE_LIST_LIMIT:-100}
+      - SERVICE_CHUNK_SIZE=${SERVICE_CHUNK_SIZE:-1048576}
+      - SERVER_ADDR=${SERVER_ADDR:-0.0.0.0:8000}
     depends_on:
       - minio
     restart: unless-stopped
