@@ -1,22 +1,14 @@
 package main
 
 import (
-	"github.com/PianyCoder/test_file_service/internal/server"
+	"context"
+	"github.com/PianyCoder/test_file_service/internal/app"
 	"log"
 )
 
 func main() {
-	cfg := server.Config{
-		ListenAddr: ":50051",
-		StorageDir: "./storage_data",
+	ctx := context.Background()
+	if err := app.Start(ctx); err != nil {
+		log.Fatalf("start app error: %v", err)
 	}
-
-	grpcServer, err := server.NewGrpcServer(cfg)
-	if err != nil {
-		log.Fatalf("Failed to create gRPC server: %v", err)
-	}
-
-	grpcServer.Start()
-
-	grpcServer.WaitForShutdown()
 }
