@@ -15,7 +15,7 @@ type MinioStorage struct {
 	bucket string
 }
 
-func NewMinioStorage(client *minio.Client, bucket string) *MinioStorage {
+func NewMinioStorage(client *minio.Client, bucket string) FileStorage {
 	return &MinioStorage{client: client, bucket: bucket}
 }
 
