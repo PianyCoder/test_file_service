@@ -7,9 +7,9 @@ import (
 )
 
 type Config struct {
-	ServerConfig  ServerConfig  `envPrefix:"SERVER_"`
-	ServiceConfig ServiceConfig `envPrefix:"SERVICE_"`
-	MinioConfig   MinioConfig   `envPrefix:"MINIO_"`
+	ServerConfig  ServerConfig
+	ServiceConfig ServiceConfig
+	MinioConfig   MinioConfig
 }
 
 func Load() (*Config, error) {

@@ -41,7 +41,6 @@ func NewFileService(storage storage.FileStorage, uploadLimit, downloadLimit, lis
 }
 
 func (fs *fileService) UploadFile(ctx context.Context, filename string, reader io.Reader) error {
-	// Acquire with ctx so cancellation/deadline works.
 	if err := fs.uploadLimiter.Acquire(ctx, 1); err != nil {
 		return fmt.Errorf("failed to acquire upload semaphore: %w", err)
 	}
