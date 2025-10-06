@@ -1,125 +1,77 @@
 package server
 
 import (
+	"context"
 	"fmt"
-	"github.com/PianyCoder/test_file_service/internal/service"
-	"github.com/PianyCoder/test_file_service/internal/storage"
+	"github.com/PianyCoder/test_file_service/infrastructure/logger"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/reflection"
+	"time"
 
 	"github.com/PianyCoder/test_file_service/internal/controller"
 	pb "github.com/PianyCoder/test_file_service/internal/proto"
-	"log"
-	"net"
-	"os"
-	"os/signal"
-	"sync"
-	"syscall"
-
 	"google.golang.org/grpc"
+	"net"
 )
 
-const (
-	DefaultListenAddr = ":50051"
-	DefaultStorageDir = "./storage_data"
-	DefaultChunkSize  = 1024 * 1024
+const gracefulTimeout = 5 * time.Second
 
-	UploadDownloadLimit = 10
-	ListLimit           = 100
-)
-
-type Config struct {
-	ListenAddr    string
-	StorageDir    string
-	ChunkSize     int
-	UploadLimit   int64
-	DownloadLimit int64
-	ListLimit     int64
+type GRPCServer struct {
+	server   *grpc.Server
+	listener net.Listener
+	ctrl     *controller.FileServiceHandler
+	addr     string
+	logger   *zap.Logger
 }
 
-func (c *Config) SetDefaults() {
-	if c.ListenAddr == "" {
-		c.ListenAddr = DefaultListenAddr
-	}
-	if c.StorageDir == "" {
-		c.StorageDir = DefaultStorageDir
-	}
-	if c.ChunkSize <= 0 {
-		c.ChunkSize = DefaultChunkSize
-	}
-	if c.UploadLimit <= 0 {
-		c.UploadLimit = UploadDownloadLimit
-	}
-	if c.DownloadLimit <= 0 {
-		c.DownloadLimit = UploadDownloadLimit
-	}
-	if c.ListLimit <= 0 {
-		c.ListLimit = ListLimit
-	}
-}
-
-type GrpcServer struct {
-	cfg        Config
-	grpcServer *grpc.Server
-	lis        net.Listener
-	wg         sync.WaitGroup
-}
-
-func NewGrpcServer(cfg Config) (*GrpcServer, error) {
-	cfg.SetDefaults()
-
-	fileStorage, err := storage.NewFileStorage(cfg.StorageDir)
+func NewGRPCServer(addr string, ctrl *controller.FileServiceHandler) (*GRPCServer, error) {
+	lis, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize file storage: %w", err)
+		return nil, fmt.Errorf("listen error: %w", err)
 	}
-	log.Printf("File storage initialized at: %s", cfg.StorageDir)
-
-	fileUseCase := service.NewFileService(
-		fileStorage,
-		cfg.UploadLimit,
-		cfg.DownloadLimit,
-		cfg.ListLimit,
-		cfg.StorageDir,
-		cfg.ChunkSize,
-	)
-	log.Printf("File use case initialized with limits: Upload/Download=%d, List=%d", cfg.UploadLimit, cfg.ListLimit)
 
 	grpcServer := grpc.NewServer()
-	fileServiceHandler := controller.NewFileServiceHandler(fileUseCase)
-	pb.RegisterFileServiceServer(grpcServer, fileServiceHandler)
+	pb.RegisterFileServiceServer(grpcServer, ctrl)
+	reflection.Register(grpcServer)
 
-	lis, err := net.Listen("tcp", cfg.ListenAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen on %s: %w", cfg.ListenAddr, err)
-	}
-	log.Printf("gRPC server configured to listen on %s", cfg.ListenAddr)
-
-	return &GrpcServer{
-		cfg:        cfg,
-		grpcServer: grpcServer,
-		lis:        lis,
+	return &GRPCServer{
+		server:   grpcServer,
+		listener: lis,
+		ctrl:     ctrl,
+		addr:     addr,
 	}, nil
 }
 
-func (s *GrpcServer) Start() {
-	s.wg.Add(1)
+func (s *GRPCServer) StartServer(ctx context.Context) error {
+	l := logger.FromContext(ctx)
+	l.Infof("gRPC listening on %s", s.addr)
+
 	go func() {
-		defer s.wg.Done()
-		log.Println("gRPC server started successfully.")
-		if serveErr := s.grpcServer.Serve(s.lis); serveErr != nil {
-			log.Fatalf("Failed to serve gRPC: %v", serveErr)
+		if err := s.server.Serve(s.listener); err != nil {
+			l.Fatalf("gRPC Serve error: %v", err)
 		}
 	}()
-}
 
-func (s *GrpcServer) Shutdown() {
-	log.Println("Shutting down gRPC server...")
-	s.grpcServer.GracefulStop()
-	s.wg.Wait()
-	log.Println("gRPC server stopped.")
-}
+	<-ctx.Done()
+	l.Info("Shutdown requested, stopping gRPC server...")
 
-func (s *GrpcServer) WaitForShutdown() {
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	s.Shutdown()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), gracefulTimeout)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.server.GracefulStop()
+		close(done)
+	}()
+
+	select {
+	case <-shutdownCtx.Done():
+		l.Warn("Graceful shutdown timed out, forcing stop")
+		s.server.Stop()
+	case <-done:
+		l.Info("gRPC server stopped gracefully")
+	}
+
+	_ = s.logger.Sync()
+	return nil
 }

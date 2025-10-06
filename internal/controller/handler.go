@@ -3,7 +3,6 @@ package controller
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	pb "github.com/PianyCoder/test_file_service/internal/proto"
 	"github.com/PianyCoder/test_file_service/internal/service"
@@ -12,114 +11,103 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"io"
-	"os"
 )
 
-const (
-	MaxUploadFileSize = 100 * 1024 * 1024
-)
+const bufferSize = 1024 * 64 // 64 KiB
 
 type FileServiceHandler struct {
 	pb.UnimplementedFileServiceServer
-
-	fileUseCase service.FileService
+	service service.FileService
 }
 
-func NewFileServiceHandler(fileUseCase service.FileService) *FileServiceHandler {
-	return &FileServiceHandler{
-		fileUseCase: fileUseCase,
-	}
+func NewFileServiceHandler(svc service.FileService) *FileServiceHandler {
+	return &FileServiceHandler{service: svc}
 }
 
 func (h *FileServiceHandler) UploadFile(stream pb.FileService_UploadFileServer) error {
+	ctx := stream.Context()
+
 	var filename string
-	var fullData []byte
-	var firstMessage = true
+	var buf bytes.Buffer
+	first := true
 
 	for {
+		select {
+		case <-ctx.Done():
+			return status.Errorf(codes.Canceled, "request canceled")
+		default:
+		}
+
 		req, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			s, ok := status.FromError(err)
-			if ok {
-				if s.Code() == codes.Canceled || s.Code() == codes.DeadlineExceeded {
-					return err
-				}
-				return status.Errorf(codes.Internal, "error receiving chunk: %v", err)
-			}
-			return status.Errorf(codes.Internal, "error receiving chunk: %v", err)
+			return status.Errorf(codes.Internal, "receive chunk error: %v", err)
 		}
 
-		if firstMessage {
+		if first {
 			filename = req.GetFilename()
 			if filename == "" {
-				return status.Errorf(codes.InvalidArgument, "filename must be provided in the first message")
+				return status.Errorf(codes.InvalidArgument, "filename required in first message")
 			}
-			firstMessage = false
+			first = false
 		}
-
-		fullData = append(fullData, req.GetChunk()...)
-
-		if len(fullData) > MaxUploadFileSize {
-			return status.Errorf(codes.InvalidArgument, "file size exceeds the upload limit of %d bytes", MaxUploadFileSize)
+		if len(req.GetChunk()) > 0 {
+			if _, err := buf.Write(req.GetChunk()); err != nil {
+				return status.Errorf(codes.Internal, "buffer write error: %v", err)
+			}
 		}
 	}
 
-	if filename == "" || len(fullData) == 0 {
-		return status.Errorf(codes.InvalidArgument, "no file data received or filename not set")
+	if filename == "" {
+		return status.Errorf(codes.InvalidArgument, "no filename provided")
+	}
+	if buf.Len() == 0 {
+		return status.Errorf(codes.InvalidArgument, "no file data provided")
 	}
 
-	dataReader := io.NopCloser(bytes.NewReader(fullData))
-	err := h.fileUseCase.UploadFile(filename, dataReader)
-	if err != nil {
-		if _, ok := err.(*os.PathError); ok || errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
-			return status.Errorf(codes.Internal, "failed to save file: %v", err)
-		}
-		if _, ok := err.(*os.PathError); ok || errors.Is(err, os.ErrExist) {
-			return status.Errorf(codes.AlreadyExists, "file already exists: %v", err)
-		}
-		return status.Errorf(codes.Internal, "failed to upload file: %v", err)
+	if err := h.service.UploadFile(ctx, filename, bytes.NewReader(buf.Bytes())); err != nil {
+		return status.Errorf(codes.Internal, "upload failed: %v", err)
 	}
 
-	return stream.SendAndClose(&pb.UploadFileResponse{
-		Message: fmt.Sprintf("File '%s' uploaded successfully", filename),
-	})
+	return stream.SendAndClose(&pb.UploadFileResponse{Message: fmt.Sprintf("file '%s' uploaded", filename)})
 }
 
 func (h *FileServiceHandler) DownloadFile(req *pb.DownloadFileRequest, stream pb.FileService_DownloadFileServer) error {
+	ctx := stream.Context()
 	filename := req.GetFilename()
 	if filename == "" {
-		return status.Errorf(codes.InvalidArgument, "filename must be provided for download")
+		return status.Errorf(codes.InvalidArgument, "filename required")
 	}
 
-	reader, writer := io.Pipe()
-
+	pr, pw := io.Pipe()
 	go func() {
-		defer writer.Close()
-		err := h.fileUseCase.DownloadFile(filename, writer)
-		if err != nil {
-			writer.CloseWithError(err)
-			return
+		defer pw.Close()
+		if err := h.service.DownloadFile(ctx, filename, pw); err != nil {
+			_ = pw.CloseWithError(err)
 		}
 	}()
 
-	buf := make([]byte, service.DefaultChunkSize)
+	buf := make([]byte, bufferSize)
 	for {
-		n, err := reader.Read(buf)
+		select {
+		case <-ctx.Done():
+			return status.Errorf(codes.Canceled, "request canceled")
+		default:
+		}
+
+		n, err := pr.Read(buf)
+		if n > 0 {
+			if sendErr := stream.Send(&pb.DownloadFileResponse{Chunk: buf[:n]}); sendErr != nil {
+				return status.Errorf(codes.Internal, "send chunk error: %v", sendErr)
+			}
+		}
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return status.Errorf(codes.Internal, "error reading file content: %v", err)
-		}
-
-		err = stream.Send(&pb.DownloadFileResponse{
-			Chunk: buf[:n],
-		})
-		if err != nil {
-			return status.Errorf(codes.Internal, "error sending file chunk: %v", err)
+			return status.Errorf(codes.Internal, "read pipe error: %v", err)
 		}
 	}
 
@@ -127,24 +115,18 @@ func (h *FileServiceHandler) DownloadFile(req *pb.DownloadFileRequest, stream pb
 }
 
 func (h *FileServiceHandler) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.ListFilesResponse, error) {
-	metadataList, err := h.fileUseCase.ListFiles()
+	metadata, err := h.service.ListFiles(ctx)
 	if err != nil {
-		if _, ok := err.(*os.PathError); ok || errors.Is(err, os.ErrNotExist) {
-			return nil, status.Errorf(codes.NotFound, "no files found or storage error: %v", err)
-		}
-		return nil, status.Errorf(codes.Internal, "failed to list files: %v", err)
+		return nil, status.Errorf(codes.Internal, "list files error: %v", err)
 	}
 
-	protoFiles := make([]*pb.FileMetadata, len(metadataList))
-	for i, meta := range metadataList {
-		protoFiles[i] = &pb.FileMetadata{
-			Name:      meta.Name,
-			CreatedAt: timestamppb.New(meta.CreatedAt),
-			UpdatedAt: timestamppb.New(meta.UpdatedAt),
-		}
+	resp := &pb.ListFilesResponse{}
+	for _, m := range metadata {
+		resp.Files = append(resp.Files, &pb.FileMetadata{
+			Name:      m.Name,
+			CreatedAt: timestamppb.New(m.CreatedAt),
+			UpdatedAt: timestamppb.New(m.UpdatedAt),
+		})
 	}
-
-	return &pb.ListFilesResponse{
-		Files: protoFiles,
-	}, nil
+	return resp, nil
 }
